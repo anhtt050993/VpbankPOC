@@ -1,0 +1,123 @@
+Install Monitor+ Logging
+Created Wednesday 09 August 2023
+
+I, Monitor		( TIG stack)
+1, cài kho repo TIG stack
+# yum install yum-utils			                    #Download bộ quản lý công cụ yum
+# vim /etc/yum.repos.d/influxdb.repo
+Thêm nôi dung sau:
+[influxdb]
+name = InfluxDB Repository - RHEL $releasever
+baseurl = https://repos.influxdata.com/rhel/$releasever/$basearch/stable
+enabled = 0
+gpgcheck = 1
+gpgkey = https://repos.influxdata.com/influxdata-archive_compat.key
+# vim /etc/yum.repos.d/grafana.repo
+Thêm vào nội dung sau:
+[grafana]
+name=grafana
+baseurl=[[https://packages.grafana.com/oss/rpm
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=|https://packages.grafana.com/oss/rpm]]
+[[https://packages.grafana.com/oss/rpm
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=|repo_gpgcheck=1]]
+[[https://packages.grafana.com/oss/rpm
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=|enabled=1]]
+[[https://packages.grafana.com/oss/rpm
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=|gpgcheck=1]]
+[[https://packages.grafana.com/oss/rpm
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=|gpgkey=]][[https://packages.grafana.com/gpg.key
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+
+urls%20=%20["|# yumdownloader --resolve influxdb]]
+[[https://packages.grafana.com/gpg.key
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+
+outputs.influxdb
+urls = ["]]http://127.0.0.1:8086"]      #Thay bằng IP của Influxdb server
+database = "telegraf"               
+username = "telegraf"               
+password = "P@ssw0rd"               
+# systemctl restart telegraf
+./pasted_image.png
+NOTE: Systemctl status telegraf thấy lỗi sau : "problem with default enties ; TTy=unknow ; PWD=/ ; USER=root"
+=> vào file cấu hình như ảnh trên thêm nội dung vào part sau:
+[Service]
+Environment=TTY=/dev/null
+Environment=PWD=/
+# sudo systemctl daemon-reload
+# sudo systemctl restart telegraf
+-Cấu hình grafana-server:
+# grafana-server -v
+# vim /etc/grafana/grafana.ini
+Uncomment 2 dòng sau:
+admin_user
+admin_password
+Setup Grafana - truy cập URL sau trên trình duyệt của client, đăng nhập với user mặc định admin/admin -> Login:
+
+http://<ip-grafana-server>:3000
+--------------------
+# sudo filebeat -e -c /etc/filebeat/filebeat.yml
+
+
+--------------------
+Lỗi khi cài ELK
+# vim /usr/lib/systemd/system/elasticsearch.service
+Thêm dòng sau vào [Service] section:
+Environment=ES_TMPDIR=/usr/share/elasticsearch/tmp
+# mkdir -p /usr/share/elasticsearch/tmp
+# systemctl daemon-reload
+# chown -R elasticsearch:elasticsearch /var/lib/elasticsearch /usr/share/elasticsearch /etc/elasticsearch
+--------------------
+Lỗi khi cài Logstash:
+vim /etc/fstab
+-Xóa noexec trong phần mount /tmp
+
+--------------------
+Tunning pipeline của logstash
+Nếu ko tunning logstash sẽ loabalance cho nhiều pipeline.worker làm việc cùng luc -> dẫn đến viecj phân tích log của postfix bị rời rạc -> ko thể nối log
+# vi /etc/logstash/pipeline.yml
+thêm nội dung sau dưới các pipeline cần chỉnh:
+pipeline.workers: 1
+--------------------
+tunning rsyslog của server monitor
+Rsyslog giới hạn số lượng log ghi được trong mỗi giây-> do số lượng thư gửi đồng thời từ emd là quá lớn nên phải tunning về ko giới hạn
+# vi /etc/rsyslog.conf 
+Thêm các dòng sau:
+$imjournalRatelimitInterval 0
+$imjournalRatelimitBurst 0
+tunning log của journald
+tương tự rsyslog
+#vi /etc/systemd/journald.conf
+Sửa các dòng sau:
+RateLimitInterval=0
+RateLimitBurst=0
+
+
+
+--------------------
+enable log of filebeat:
+# vi /etc/filebeat/filebeat.yml
+thêm các dòng sau vào "logging section"
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat.log
+  keepfiles: 7
