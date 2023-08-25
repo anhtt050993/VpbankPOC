@@ -1,0 +1,77 @@
+Unbound
+Created Tuesday 25 July 2023
+
+# Cài đặt và cấu hình cache only DNS Server với Unbound
+
+## Bước 01: Kiểm tra Hostname và IP của hệ thống
+Trước khi thiết lập một máy chủ caching DNS, đảm bảo rằng bạn đã thêm tên máy chủ và cấu hình chính xác địa chỉ IP tĩnh cho hệ thống của bạn, nếu chưa đặt địa chỉ IP tĩnh cho hệ thống
+Sau khi thiết lập đúng tên máy chủ và địa chỉ IP tĩnh, bạn có thể xác mình chúng bằng các lệnh sau:
+# hostnamectl;
+# ip addr show | grep inet
+
+## Bước 02: Cài đặt và cấu hình Unbound
+Trước khi cài đặt gói `Unbound`, chúng ta phải cập nhật hệ thống lên phiên bản mới nhất, sau đó chúng ta mới cài đặt gói unbound
+# yum install unbound -y
+Sau khi gói đã được cài đặt, hãy tạo một bản sao của tệp cấu hình unbound trước khi thực hiện bất kỳ thay đổi nào đối với tệp gốc.
+# cp /etc/unbound/unbound.conf /etc/unbound/unbound.conf.original
+Chỉnh sửa cấu hình
+# vim /etc/unbound/unbound.conf
+khi tệp được mở để chỉnh sửa, hãy thực hiện các thay đổi sau:
+
+### Các interface
+Tìm kiếm interface và cho phép interface mà chúng ta sẽ sử dụng hoặc nếu máy chủ của chúng ta có nhiều interface chúng ta phải sử dụng interface 0.0.0.0.
+
+Giả sử địa chỉ IP máy chủ là 192.168.0.50. Vì vậy, sẽ sử dụng unbound với interface này.
+interface: 192.168.0.50
+
+### Bật IP và các giao thức hỗ trợ
+Tìm kiếm các chuỗi sau đây và đổi thành 'Yes'.
+do-ip4: yes
+do-udp: yes
+do-tcp: yes
+
+### Bật tính năng ghi nhật ký (logging)
+Để bật log, hãy thêm như dưới đây, nó sẽ log tất cả các hoạt động của unbound
+logfile: /var/log/unbound.log
+
+### Tăt xác thực query:
+Thay đổi 2 dòng sau:
+trust-anchor-signaling : yes -> trust-anchor-signaling : no
+root-key-sentinel : yes -> root-key-sentinel : no
+
+
+### Ẩn định danh và phiên bản
+Bật tham số sau để ẩn các truy vấn id.server và hostname.bind.
+hide-identity: yes
+Bật tham số sau để ẩn các truy vấn version.server và version.bind.
+hide-version: yes
+### Kiểm soát truy cập
+Sau đó tim kiếm `access-control` đặt thành `allow`. Điều này cho phép các client được phép truy vấn tới máy chủ unbound
+Giả sử `access-control` sử dụng 0.0.0.0, có nghĩa là cho phép bất kỳ ai gửi truy vấn tới máy chủ này. Nếu chúng ta cần từ chối truy vấn cho một khoảng network chúng ta có thể định nghĩa network cần phải từ chối từ các truy vấn của unbound.
+access-control: 0.0.0.0/0 allow
+Lưu ý: Thay vì cho phép, chúng ta có thể thay thế nó với allow_snoop, cấu hình này sẽ cho phép một số thông số bổ sung như dig và nó hỗ trợ cả hai truy vấn đệ quy và không đệ quy.
+
+### Forward Zones
+Sau đó, thay đổi forwarders cho truy vấn không thực hiện bởi máy chủ này nó sẽ chuyển tiếp đến miền gốc (.) và giải quyết các truy vấn.
+forward-zone:
+	name: "."
+	forward-addr: 8.8.8.8
+	forward-addr: 8.8.4.4
+Sau khi thực hiện cấu hình trên, bây giờ hãy xác minh tệp `unbound.conf` cho bất kỳ lỗi nào bằng lệnh sau.
+# unbound-checkconf /etc/unbound/unbound.conf
+Sau khi xác minh tệp mà không có bất kỳ lỗi nào, bạn có thể khởi động lại một cách an toàn dịch vụ `unbound` và bật nó lên khi khởi động hệ thống.
+# systemctl start unbound
+# systemctl enable unbound
+
+## Bước 03: Kiểm tra DNS Cache cục bộ
+Bây giờ là lúc kiểm tra DNS cache, bằng cách thực hiện `drill` (truy vấn) tên miền 'iwayvietnam.com'. Đầu tiên kết quả lệnh `drill` cho tên miền 'iwayvietnam.com' sẽ mất vài mili giây, và sau đó thực hiện lần drill thứ hai và hãy lưu ý về thời gian truy vấn cần cho cả hai lần drill.
+drill iwayvietnam.com @192.168.0.50
+--------------------
+Bật log unbound:
+Uncomment part sau tại /etc/unbound/unbound.conf
+server:
+  verbosity: 2								//Điền level log từ 0->5 5 là cao nhất
+  logfile: "/var/log/unbound/unbound.log"	//Điền file log
+Tạo folder chứa log:
+#mkdir -p /var/log/unbound
+#chown -R unbound:unbound /var/log/unbound
