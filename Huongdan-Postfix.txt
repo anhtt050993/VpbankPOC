@@ -1,0 +1,200 @@
+Postfix+Opendkim
+Created Monday 31 July 2023
+
+Install and config Postfix
+Install
+#yum install postfix 						#(version 3x)
+# yum install postfix-mysql
+Config
+# cp /etc/postfix/main.cf /etc/postfix/main.cf.ori
+#vim /etc/postfix/main.cf				# sửa file cấu hình postfix
+sửa các nội dung sau:
+
+inet_interfaces = all
+inet_protocols = ipv4
+
+Thêm các nội dung sau vào cuối file
+
+smtp_tls_security_level = may
+smtp_tls_loglevel = 2
+message_size_limit = 10485760
+
+smtpd_recipient_restrictions =
+	reject_non_fqdn_recipient, reject_unknown_recipient_domain,
+	check_recipient_access proxy:mysql:/etc/postfix/mysql-recipient-access.cf
+
+smtpd_client_restrictions =
+   check_client_access proxy:mysql:/etc/postfix/mysql-client-access.cf,
+   reject
+
+smtpd_sender_restrictions =
+   check_sender_access proxy:mysql:/etc/postfix/mysql-sender-access.cf,
+   reject
+
+sender_dependent_default_transport_maps = proxy:mysql:/etc/postfix/mysql-sender-transport.cf
+
+####relay_domains = proxy:mysql:/etc/postfix/mysql-relay-domain.cf
+
+- Cấu hình trên gọi các file link đến database để xử lý các nguồn gửi => tạo các file trên với nội dung sau:
+# vim /etc/postfix/mysql-recipient-access.cf
+user = emd
+password = emdP@ssw0rd
+dbname = emd-database
+hosts = emd-database-server
+query = select (CASE COUNT(ra.access) WHEN 0 THEN "OK" ELSE ra.access END) as access FROM restrict_addresses ra WHERE ra.recipient="%s"
+# vim /etc/postfix/mysql-client-access.cf
+user = emd
+password = emdP@ssw0rd
+dbname = emd-database
+hosts = emd-database-server
+query = SELECT `access` FROM `client_accesses` WHERE `client_ip`='%s' LIMIT 1
+# vim /etc/postfix/mysql-sender-access.cf
+user = emd
+password = emdP@ssw0rd
+dbname = emd-database
+hosts = emd-database-server
+query = SELECT `access` FROM `sender_accesses` WHERE `sender`='%s' LIMIT 1
+# vim /etc/postfix/mysql-sender-transport.cf
+user = emd
+password = emdP@ssw0rd
+dbname = emd-database
+hosts = emd-database-server
+query = SELECT `transport` FROM `sender_transports` WHERE `sender`='%s' GROUP BY `sender`
+#vim /etc/postfix/mysql-relay-domain.cf
+user = emd
+password = password
+dbname = emd
+hosts = 127.0.0.1
+query = SELECT '%s' as `domain`
+Lưu ý: các file trên cần thay đổi thông số database của thực tế
+vd:
+./pasted_image002.png
+
+
+--------------------
+# cp -vp /etc/postfix/master.cf /etc/postfix/master.cf.ori
+# vim /etc/postfix/master.cf					#Cấu hình postfix dùng haproxy để làm load balance
+Thêm 2 dòng sau: 
+( phía dưới dòng: smtp      inet  n       -       n       -       -       smtpd)
+  -o smtpd_upstream_proxy_protocol=haproxy
+  -o smtpd_upstream_proxy_timeout = 5s
+# vim /etc/postfix/master.cf   					#Cấu hình file master.cf để config các luồng gửi 
+Thêm các dòng sau:
+out-one     unix  -       -       n       -       -       smtp
+  -o smtp_bind_address=89.xxx.xxx.2 						#Thsay 89xx bằng IP của luồng gửi 1
+  -o inet_interfaces=89.xxx.xxx.2							  #Thay 89xx bằng IP của luồng gửi 1
+  -o myhostname=outone.example.org						    #Thay outonexx bằng  full hostname của server
+  -o smtp_helo_name=outone.example.org					#Thay outonexx bằng  full hostname của server
+  #-o syslog_name=smtp-out-one
+out-two     unix  -       -       n       -       -       smtp					#Tương tự như out-one
+  -o smtp_bind_address=188.xxx.xxx.2
+  -o inet_interfaces=188.xxx.xxx.2
+  -o myhostname=outtwo.example.org
+  -o smtp_helo_name=outtwo.example.org
+  #-o syslog_name=smtp-out-two
+vd:
+./pasted_image.png
+postmap -q demo1@example.com mysql:/etc/postfix/mysql-.....					#Check cú pháp queery mysql
+			
+Install and config Opendkim
+Install
+# yum install opendkim									    #Cài gói opendkim
+# yum install opendkim-tools								#Cài gói opendkim-tools để genkey
+# yum install opendbx-mysql								#phục vụ opendkim connect với databases
+# yum install mysql-libs									  #phục vụ opendkim connect với databases
+Config
+# cp /etc/opendkim.conf /etc/opendkim.conf.ori
+# vim /etc/opendkim.conf
+Sửa các thông số sau ( thông số nào thiếu thì thêm)
+PidFile                 /var/run/opendkim/opendkim.pid
+Mode                    sv
+AutoRestart             Yes
+AutoRestartRate         10/1h
+TemporaryDirectory      /var/tmp
+Syslog                  Yes
+SyslogSuccess           Yes
+LogWhy                  Yes
+UserID                  opendkim:opendkim
+Socket                  inet:8891@localhost
+UMask                   022
+Canonicalization        relaxed/simple
+#KeyTable                refile:/etc/opendkim/KeyTable							    #Cấu hình lấy KeyTable ở local)
+#SigningTable            refile:/etc/opendkim/SigningTable						#Cấu hình lấy SigningTable ở local)
+KeyTable     dsn:mysql://user:password@server/dbname/table=domains?keycol=id?datacol=name,dkim_selector,dkim_private_key
+SigningTable dsn:mysql://user:password@server/dbname/table=domains?keycol=name?datacol=id
+ExternalIgnoreList      refile:/etc/opendkim/TrustedHosts
+InternalHosts           refile:/etc/opendkim/TrustedHosts
+Lưu ý : KeyTable và Signing table thay các thông số của database bằng các thông số thực tế
+vd:
+./pasted_image001.png
+
+--------------------
+## Thiết lập cặp khóa Public/Private
+Tạo cặp khóa khóa cho tên miền mydomain.com:
+# mkdir /etc/opendkim/keys/mydomain.com											                          #thay mydomain.com bằng domain gửi thư
+# opendkim-genkey -D /etc/opendkim/keys/mydomain.com/ -d mydomain.com -s default	  #thay domain và default. default là selector key
+# chown -R opendkim: /etc/opendkim/keys/mydomain.com							                    #Changeowner cho opendkim 
+Tạo tập tin /etc/opendkim/KeyTable:
+Thêm mydomain.com vào KeyTable của OpenDKIM bằng cách thêm bản ghi sau:
+default._domainkey.mydomain.com mydomain.com:default:/etc/opendkim/keys/mydomain.com/default
+Thay default bằng selector-key ///Thay mydomain.com bằng domain gửi thư
+Tập tin KeyTable cho OpenDKIM biết nơi tìm khoá của các domain. Mỗi mục trong tập tin KeyTable là một dòng đơn cho mỗi vị trí đặt khóa
+Tạo tập tin /etc/opendkim/SigningTable:
+# vim /etc/opendkim/SigningTable
+Thêm bản ghi sau vào SigningTable của OpenDKIM:
+*@mydomain.com default._domainkey.mydomain.com
+Thay default bằng selector-key /Thay mydomain.com bằng domain gửi thư
+Tạo tập tin /etc/opendkim/TrustedHosts:		//Cho phép các host nào được kí dkim
+# vim /etc/opendkim/TrustedHosts
+Và thêm các dòng sau:
+__''mydomain.com				                                                          #Thay bằng full hostname của máy chủ postfix
+Cuối cùng, chỉnh sửa DNS zone của mydomain.com, thêm vào một bản ghi TXT từ /etc/opendkim/keys/mydomain.com/default.txt
+default._domainkey      IN      TXT     ( "v=DKIM1; k=rsa; "
+		  "p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCgIc9WoXdhfYfWI5ghQSPYRMwT4EJOKnHvCIHU3pVysdQoq82Xb7ds9PFNPMcXUX2DXNwrO3rjafL314iVAZtimuKr+yVpvkbz+Fv5z63w7J9LVxq2/+xQcnURf+H/sZC0UjFsbTAgVr7kgEw5RYlw37FmJffkHTqBjp5veIq9ewIDAQAB" )  ; ----- DKIM key default for mydomain.com
+
+## Cấu hình Postfix
+Để tích hợp OpenDKIM với Postfix, chúng ta cần thêm các dòng sau vào /etc/postfix/main.cf:
+smtpd_milters           = inet:127.0.0.1:8891
+non_smtpd_milters       = $smtpd_milters
+milter_default_action   = accept
+milter_protocol         = 2
+--------------------
+
+Cài 1 instance mới trên postfix:
+# vim /etc/hosts
+-Điền thêm đoạn sau:
+./pasted_image004.png
+# postmulti -e init
+# postmulti -I postfix-second -G postfix -e create
+# postmulti -i postfix-second -e enable
+# chown -R postfix:root /var/lib/postfix-second
+# postconf -c /etc/postfix-second -e "inet_protocols = IPv4"
+# postconf -c /etc/postfix-second -e "myhostname = emdsmtp02"
+# postconf -c /etc/postfix-second -e "mynetworks = 0.0.0.0/0
+# postconf -c /etc/postfix-second -e "inet_interfaces = all
+# vim /etc/postfix-second/main.cf
+thêm 3 dòng sau:
+myhostname = smtp01-second
+master_service_disable = (rỗng)
+sender_dependent_default_transport_maps = randmap:{out-one, out-two}
+./pasted_image005.png
+
+# vim /etc/postfix-second/master
+thêm cấu hình 2 out:
+sửa:
+smtp        inet     n     -     n    -      -      smtpd
+thành :
+2525(port tùy chọn)      inet     n    -     n     -     -      smtpd
+out-one     unix  -       -       n       -       -       smtp
+  -o smtp_bind_address=89.xxx.xxx.2 						#Thsay 89xx bằng IP của luồng gửi 1
+  -o inet_interfaces=89.xxx.xxx.2							  #Thay 89xx bằng IP của luồng gửi 1
+  -o myhostname=outone.example.org						    #Thay outonexx bằng  full hostname của server
+  -o smtp_helo_name=outone.example.org					#Thay outonexx bằng  full hostname của server
+  -o syslog_name=smtp-out-one-second
+out-two     unix  -       -       n       -       -       smtp					#Tương tự như out-one
+  -o smtp_bind_address=188.xxx.xxx.2
+  -o inet_interfaces=188.xxx.xxx.2
+  -o myhostname=outtwo.example.org
+  -o smtp_helo_name=outtwo.example.org
+  -o syslog_name=smtp-out-two-second
+./pasted_image006.png
