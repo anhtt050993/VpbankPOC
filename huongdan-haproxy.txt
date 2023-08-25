@@ -1,0 +1,73 @@
+Install haproxy
+Created Thursday 03 August 2023
+
+# Cấu hình cân bằng tải và tính sẵn sàng cao với HaProxy
+
+## Cài đặt HAProxy
+Cài đặt gói bằng yum:
+# yum -y install haproxy
+
+## Cấu hình HAProxy cho Postfix
+# vim /etc/haproxy/haproxy.cfg
+Thêm nội dung sau vào cuối file:
+frontend ft_smtp
+	bind *:25
+	mode tcp
+	no option http-server-close
+	timeout client 1m
+	log global
+	option tcplog
+	maxconn 4096
+	default_backend bk_postfix
+
+
+backend bk_postfix
+	mode tcp
+	no option http-server-close
+	log global
+	option tcplog
+	timeout server 1m
+	timeout connect 30s
+	balance roundrobin
+	server postfix-host1 42.112.212.44:25 send-proxy			#Thay bằng ip của postfix
+	server postfix-host2 42.112.212.45:25 send-proxy			#Thay bằng ip của postfix
+
+## Cấu hình HAProxy cho web emd và mautic
+Thêm nội dung sau vào cuối file /etc/haproxy/haproxy.cfg
+
+frontend http-in
+  bind *:80
+  acl is_emd-poc hdr(host) -i emd-poc.vpbank.com.vn
+  acl is_mautic-poc hdr(host) -i mautic-poc.vpbank.com.vn
+  use_backend emd-poc-backend if is_emd-poc
+  use_backend mautic-poc-backend if is_mautic-poc
+
+backend emd-poc-backend
+  balance roundrobin
+  server emd-poc 42.112.212.44:80 check
+
+backend mautic-poc-backend
+  balance roundrobin
+  server mautic-poc 10.37.8.171:80 check
+--------------------
+Cấu hình enable log HAproxy:https://medium.com/@curious.viral/configure-haproxy-server-log-in-rsyslog-on-centos-7-a415d57d916e
+
+Mặc đinh Ha proxy gửi log về rsyslog  on 127.0.0.1, nhưng rsyslog ko lắng nghe
+#vim /etc/rsyslog.conf và uncomment 2 line sau để listen on port UDP 514 for all IP address
+$ModLoad imudp
+
+$UDPServerRun 514
+hoặc trên redhat 8:
+module (load="imudp")
+input (type="imudp" port="514")
+
+Tạo file cấu hình trong rsyslog.d để lắng nghe log ha:
+#vim /etc/rsyslog.d/ha.conf
+thêm các dòng sau:
+Local2.*    /var/log/haproxy.log
+local2.=info   /var/log/haproxy-in.log
+local2.notice  /var/log/haproxy-stat.log
+
+Restart the service of the Rsyslog server and Haproxy
+
+Logfile location Path is /var/log/haproxy.log
