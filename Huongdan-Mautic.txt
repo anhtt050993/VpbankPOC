@@ -1,0 +1,91 @@
+Install Mautic
+Created Wednesday 02 August 2023
+1, Cài mautic
+download và giải nén code mautic:
+download code mautic theo link sau -> chọn file cần tải: https://github.com/mautic/mautic/releases/tag/4.4.9
+# wget https://github.com/mautic/mautic/releases/download/4.4.9/4.4.9.zip
+1. # mkdir -p /usr/share/nginx/mautic 				    #tạo folder chưa code mautic
+#mv 4.4.9.zip /usr/share/nginx/mautic 				    #move file nén vừa tải vào thư mục chứa code
+#cd /usr/share/nginx/mautic && unzip 4.4.9.zip		#cd vào thư mục chứa code và giải nén
+#chown -R nginx:nginx /usr/share/nginx/mautic		  #chang own cho ngĩnx là chủ thư mục code mautic 
+Cấu hình nginx deploy web của mautic
+# sudo yum install -y wget unzip nginx  php php-fpm php-mysqlnd php-gd php-intl php-mbstring php-json php-iconv php-xml php-curl php-zip
+#vim /etc/nginx/conf.d/mautic.conf
+Thêm nội dung sau:
+
+server {
+	listen 80;
+	server_name mautic-poc.vpbank.com.vn;
+
+	root /usr/share/nginx/mautic;
+	index index.php;
+
+	location / {
+		try_files $uri $uri/ /index.php$is_args$args;
+	}
+
+	location ~ \.php$ {
+		try_files $uri =404;
+		fastcgi_pass unix:/var/run/php-fpm/www.sock;
+		fastcgi_index index.php;
+		fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+		include fastcgi_params;
+	}
+}
+Bật dịch vụ nginx
+#sudo nginx -t
+#sudo systemctl start nginx
+#sudo systemctl enable nginx
+
+Cấu hình nginx work with php-fpm
+#mkdir /var/run/php-fpm
+#chown -R  nginx:nginx /var/run/php-fpm
+#chown -R nginx:nginx /var/lib/php
+#vim /etc/php-fpm.d/www.conf
+thay đổi các nội dung sau:
+user = apache -> user =nginx
+group =apache -> group = nginx
+listen = /run/php-fpm/www.sock -> listen = /var/run/php-fpm/www.sock 
+;listen.owner = nobody -> listen.owner = nginx
+;listen.group = nobody -> listen.group = nginx
+; listen.mode -> listen.mode 
+Enable các php extension
+# vim /etc/php.ini
+Thêm các dòng sau vào part extension:
+extension=gd
+extension=intl
+extension=mysqli
+extension=mbstring
+extension=json
+extension=iconv
+extension=xml
+extension=curl
+Bật dịch vụ php-fpm
+#sudo systemctl start php-fpm
+#sudo systemctl enable php-fpm
+
+#sudo systemctl restart nginx
+#sudo systemctl restart php-fpm
+Hoàn thiện cấu hình mautic:
+Mở duyệt web đến web mautic và điền các thông tin database , setting mta
+
+Thêm cronjob cho mautic
+# crontab - u nginx -e
+thêm các dòng sau:
+8,23,38,52 * * * *        php /usr/share/nginx/mautic/bin/console mautic:segments:update > /var/log/cron.pipe 2>&1
+	   */5 * * * *          php /usr/share/nginx/mautic/bin/console mautic:import > /var/log/cron.pipe 2>&1
+5,20,35,50 * * * *        php /usr/share/nginx/mautic/bin/console mautic:campaigns:rebuild > /var/log/cron.pipe 2>&1
+2,17,32,47 * * * *        php /usr/share/nginx/mautic/bin/console mautic:campaigns:trigger > /var/log/cron.pipe 2>&1
+0,15,30,45 * * * *        php /usr/share/nginx/mautic/bin/console mautic:messages:send > /var/log/cron.pipe 2>&1
+0,15,30,45 * * * *        php /usr/share/nginx/mautic/bin/console mautic:emails:send > /var/log/cron.pipe 2>&1
+0,15,30,45 * * * *        php /usr/share/nginx/mautic/bin/console mautic:email:fetch > /var/log/cron.pipe 2>&1
+0,15,30,45 * * * *        php /usr/share/nginx/mautic/bin/console mautic:social:monitoring > /var/log/cron.pipe 2>&1
+0,15,30,45 * * * *        php /usr/share/nginx/mautic/bin/console mautic:webhooks:process > /var/log/cron.pipe 2>&1
+0,15,30,45 * * * *        php /usr/share/nginx/mautic/bin/console mautic:broadcasts:send > /var/log/cron.pipe 2>&1
+* 1 * * *                php /usr/share/nginx/mautic/bin/console mautic:maintenance:cleanup --days-old=365 > /var/log/cron.pipe 2>&1
+0 4 15 * *               php /usr/share/nginx/mautic/bin/console mautic:iplookup:download > /var/log/cron.pipe 2>&1
+*/5 * * * *              php /usr/share/nginx/mautic/bin/console mautic:reports:scheduler > /var/log/cron.pipe 2>&1
+0 5 10 * *               php /usr/share/nginx/mautic/bin/console mautic:unusedip:delete > /var/log/cron.pipe 2>&1
+NOTE: tạo file /var/log/cron.pipe
+#touch /var/log/cron.pipe
+#chown -R nginx:nginx /var/log/cron.pipe
